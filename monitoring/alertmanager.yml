@@ -1,0 +1,92 @@
+# AlertManager configuration for healthcare API alerts
+global:
+  smtp_smarthost: 'localhost:587'
+  smtp_from: 'alerts@healthcare.com'
+  slack_api_url: 'YOUR_SLACK_WEBHOOK_URL'
+
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: 'healthcare-team'
+  routes:
+  - match:
+      severity: critical
+    receiver: 'healthcare-critical'
+    group_wait: 5s
+    repeat_interval: 30m
+  - match:
+      severity: warning
+    receiver: 'healthcare-warning'
+    repeat_interval: 2h
+
+receivers:
+- name: 'healthcare-team'
+  email_configs:
+  - to: 'devops-team@healthcare.com'
+    subject: '[{{ .GroupLabels.severity | toUpper }}] Healthcare API Alert'
+    body: |
+      {{ range .Alerts }}
+      **Alert:** {{ .Annotations.summary }}
+      **Description:** {{ .Annotations.description }}
+      **Labels:**
+      {{ range .Labels.SortedPairs }}  - {{ .Name }}: {{ .Value }}
+      {{ end }}
+      {{ end }}
+  slack_configs:
+  - channel: '#healthcare-alerts'
+    title: 'Healthcare API Alert'
+    text: |
+      {{ range .Alerts }}
+      *Alert:* {{ .Annotations.summary }}
+      *Description:* {{ .Annotations.description }}
+      *Severity:* {{ .Labels.severity }}
+      {{ end }}
+
+- name: 'healthcare-critical'
+  email_configs:
+  - to: 'devops-team@healthcare.com, management@healthcare.com'
+    subject: '[CRITICAL] Healthcare API Alert - Immediate Action Required'
+    body: |
+      🚨 CRITICAL ALERT 🚨
+      
+      {{ range .Alerts }}
+      **Alert:** {{ .Annotations.summary }}
+      **Description:** {{ .Annotations.description }}
+      **Service:** {{ .Labels.service }}
+      **Time:** {{ .StartsAt }}
+      
+      This alert requires immediate attention!
+      {{ end }}
+  slack_configs:
+  - channel: '#healthcare-critical'
+    title: '🚨 CRITICAL: Healthcare API Alert'
+    text: |
+      <!channel>
+      {{ range .Alerts }}
+      *Alert:* {{ .Annotations.summary }}
+      *Description:* {{ .Annotations.description }}
+      *Service:* {{ .Labels.service }}
+      *Time:* {{ .StartsAt }}
+      {{ end }}
+    send_resolved: true
+
+- name: 'healthcare-warning'
+  slack_configs:
+  - channel: '#healthcare-alerts'
+    title: '⚠️ WARNING: Healthcare API Alert'
+    text: |
+      {{ range .Alerts }}
+      *Alert:* {{ .Annotations.summary }}
+      *Description:* {{ .Annotations.description }}
+      *Service:* {{ .Labels.service }}
+      {{ end }}
+    send_resolved: true
+
+inhibit_rules:
+- source_match:
+    severity: 'critical'
+  target_match:
+    severity: 'warning'
+  equal: ['alertname', 'cluster', 'service']

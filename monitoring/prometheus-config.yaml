@@ -1,0 +1,161 @@
+# Prometheus configuration for healthcare API monitoring
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    
+    rule_files:
+      - "/etc/prometheus/rules/*.yml"
+    
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+              - alertmanager:9093
+    
+    scrape_configs:
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+      
+      - job_name: 'healthcare-api'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - healthcare-api
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - action: labelmap
+            regex: __meta_kubernetes_service_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            action: replace
+            target_label: kubernetes_name
+      
+      - job_name: 'kubernetes-nodes'
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+      
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: kubernetes_pod_name
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  namespace: monitoring
+data:
+  healthcare-api.yml: |
+    groups:
+    - name: healthcare-api-alerts
+      rules:
+      # High CPU Usage Alert
+      - alert: HealthcareAPIHighCPU
+        expr: rate(container_cpu_usage_seconds_total{namespace="healthcare-api",pod=~"healthcare-prediction-api-.*"}[5m]) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: healthcare-prediction-api
+        annotations:
+          summary: "Healthcare API Pod {{ $labels.pod }} has high CPU usage"
+          description: "CPU usage is {{ $value }}% for pod {{ $labels.pod }} in namespace {{ $labels.namespace }}"
+      
+      # High Memory Usage Alert
+      - alert: HealthcareAPIHighMemory
+        expr: (container_memory_usage_bytes{namespace="healthcare-api",pod=~"healthcare-prediction-api-.*"} / container_spec_memory_limit_bytes{namespace="healthcare-api",pod=~"healthcare-prediction-api-.*"}) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          service: healthcare-prediction-api
+        annotations:
+          summary: "Healthcare API Pod {{ $labels.pod }} has high memory usage"
+          description: "Memory usage is {{ $value }}% for pod {{ $labels.pod }} in namespace {{ $labels.namespace }}"
+      
+      # Health Check Failure Alert
+      - alert: HealthcareAPIHealthCheckFailed
+        expr: up{job="healthcare-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: healthcare-prediction-api
+        annotations:
+          summary: "Healthcare API health check failed"
+          description: "Healthcare API instance {{ $labels.instance }} has failed health check for more than 2 minutes"
+      
+      # High Error Rate Alert
+      - alert: HealthcareAPIHighErrorRate
+        expr: rate(api_requests_total{status=~"5.."}[5m]) / rate(api_requests_total[5m]) * 100 > 5
+        for: 3m
+        labels:
+          severity: critical
+          service: healthcare-prediction-api
+        annotations:
+          summary: "Healthcare API has high error rate"
+          description: "Error rate is {{ $value }}% for the last 5 minutes"
+      
+      # Response Time Alert
+      - alert: HealthcareAPISlowResponse
+        expr: histogram_quantile(0.95, rate(api_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: healthcare-prediction-api
+        annotations:
+          summary: "Healthcare API has slow response times"
+          description: "95th percentile response time is {{ $value }}s"
+      
+      # Pod Restart Alert
+      - alert: HealthcareAPIPodRestarting
+        expr: rate(kube_pod_container_status_restarts_total{namespace="healthcare-api"}[15m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          service: healthcare-prediction-api
+        annotations:
+          summary: "Healthcare API pod {{ $labels.pod }} is restarting"
+          description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} has restarted {{ $value }} times in the last 15 minutes"

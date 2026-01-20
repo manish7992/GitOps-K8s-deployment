@@ -1,0 +1,90 @@
+# Security policies and configurations for healthcare API
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: healthcare-api-authz
+  namespace: healthcare-api
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: healthcare-prediction-api
+  rules:
+  - from:
+    - source:
+        principals: ["cluster.local/ns/istio-system/sa/istio-ingressgateway-service-account"]
+    to:
+    - operation:
+        methods: ["GET", "POST"]
+        paths: ["/health", "/predict", "/metrics"]
+  - from:
+    - source:
+        namespaces: ["monitoring"]
+    to:
+    - operation:
+        methods: ["GET"]
+        paths: ["/metrics"]
+---
+apiVersion: security.istio.io/v1beta1
+kind: RequestAuthentication
+metadata:
+  name: healthcare-api-jwt
+  namespace: healthcare-api
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: healthcare-prediction-api
+  jwtRules:
+  - issuer: "https://healthcare.auth0.com/"
+    jwksUri: "https://healthcare.auth0.com/.well-known/jwks.json"
+    audiences:
+    - "healthcare-api"
+---
+# Pod Security Policy (deprecated, using Pod Security Standards instead)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: healthcare-api
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+# Security Context Constraints for OpenShift (if applicable)
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: healthcare-api-scc
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegeEscalation: false
+allowPrivilegedContainer: false
+allowedCapabilities: null
+defaultAddCapabilities: null
+fsGroup:
+  type: MustRunAs
+  ranges:
+  - min: 1000
+    max: 1000
+groups: []
+readOnlyRootFilesystem: true
+requiredDropCapabilities:
+- ALL
+runAsUser:
+  type: MustRunAsNonRoot
+seLinuxContext:
+  type: MustRunAs
+supplementalGroups:
+  type: MustRunAs
+  ranges:
+  - min: 1000
+    max: 1000
+volumes:
+- configMap
+- downwardAPI
+- emptyDir
+- persistentVolumeClaim
+- projected
+- secret

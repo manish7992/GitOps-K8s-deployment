@@ -1,0 +1,137 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: healthcare-prediction-api
+  namespace: healthcare-api
+  labels:
+    app.kubernetes.io/name: healthcare-prediction-api
+    app.kubernetes.io/component: api
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: kubernetes
+spec:
+  replicas: 3
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: healthcare-prediction-api
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: healthcare-prediction-api
+        app.kubernetes.io/component: api
+        app.kubernetes.io/version: "1.0.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: healthcare-api-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: healthcare-api
+        image: your-dockerhub-username/healthcare-prediction-api:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+        env:
+        - name: PORT
+          valueFrom:
+            configMapKeyRef:
+              name: healthcare-api-config
+              key: PORT
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: healthcare-api-config
+              key: LOG_LEVEL
+        - name: PYTHONUNBUFFERED
+          valueFrom:
+            configMapKeyRef:
+              name: healthcare-api-config
+              key: PYTHONUNBUFFERED
+        - name: PYTHONDONTWRITEBYTECODE
+          valueFrom:
+            configMapKeyRef:
+              name: healthcare-api-config
+              key: PYTHONDONTWRITEBYTECODE
+        # Example of using secrets
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-api-secrets
+              key: database-url
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-api-secrets
+              key: api-key
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+          successThreshold: 1
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 10
+          successThreshold: 1
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp-volume
+          mountPath: /tmp
+        - name: app-logs
+          mountPath: /app/logs
+      volumes:
+      - name: tmp-volume
+        emptyDir: {}
+      - name: app-logs
+        emptyDir: {}
+      terminationGracePeriodSeconds: 30
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
