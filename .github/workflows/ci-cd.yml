@@ -175,12 +175,49 @@ jobs:
       with:
         sarif_file: 'trivy-dockerhub-results.sarif'
 
+  # Update Helm Values
+  update-values:
+    name: Update Helm Values
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.ref == 'refs/heads/master'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
+
+    - name: Update values.yaml with new image tag
+      run: |
+        cd ../GitOps-helmchart/healthcare-prediction-api
+        
+        # Update the image tag in values.yaml
+        IMAGE_TAG="predictions-${{ github.sha }}"
+        sed -i "s/tag: .*/tag: \"$IMAGE_TAG\"/g" values.yaml
+        
+        # Update the image repository to match the built image
+        sed -i "s|repository: .*|repository: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}|g" values.yaml
+        
+        echo "Updated values.yaml with image tag: $IMAGE_TAG"
+        cat values.yaml | grep -A 3 "image:"
+
+    - name: Commit updated values.yaml
+      run: |
+        cd ../GitOps-helmchart/healthcare-prediction-api
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        
+        git add values.yaml
+        git commit -m "chore: update image tag to predictions-${{ github.sha }}" || echo "No changes to commit"
+        git push
+
   # Deploy to EKS
   deploy:
     name: Deploy to EKS
     runs-on: ubuntu-latest
-    needs: [build]
-    if: github.ref == 'refs/heads/main'
+    needs: [build, update-values]
+    if: github.ref == 'refs/heads/master'
     environment:
       name: production
       url: https://healthcare-api.example.com
@@ -215,18 +252,19 @@ jobs:
         echo "Waiting for External Secret to sync Docker Hub credentials..."
         kubectl wait --for=condition=Ready externalsecret/dockerhub-external-secret -n ${{ env.KUBE_NAMESPACE }} --timeout=300s
 
+    - name: Checkout latest changes (with updated values.yaml)
+      uses: actions/checkout@v4
+      with:
+        ref: master
+        fetch-depth: 0
+
     - name: Deploy with Helm
       run: |
-        # Set the image tag to predictions-<commit-id>
-        IMAGE_TAG="predictions-${{ github.sha }}"
-        
-        # Deploy using Helm
+        # Deploy using the updated values.yaml file
         helm upgrade --install healthcare-prediction-api \
           ../GitOps-helmchart/healthcare-prediction-api \
           --namespace ${{ env.KUBE_NAMESPACE }} \
           --create-namespace \
-          --set image.tag=${IMAGE_TAG} \
-          --set image.repository=${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }} \
           --values ../GitOps-helmchart/healthcare-prediction-api/values.yaml \
           --wait \
           --timeout=300s
